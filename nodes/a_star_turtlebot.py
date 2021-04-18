@@ -29,7 +29,7 @@ rospy.init_node("move_robot")
 pub = rospy.Publisher("cmd_vel", Twist, queue_size=5)
 # Declare a message of type Twist
 velocity_msg = Twist()
-rate = rospy.Rate(4)
+rate = rospy.Rate(4)  # 4 Hz
 # set up a tf listener to retrieve transform between the robot and the world
 tf_listener = tf.TransformListener()
 # parent frame for the listener
@@ -167,7 +167,7 @@ def action(Xi, Yi, theta_i, UL, UR):
     Xn = Xi
     Yn = Yi
     theta_n = np.deg2rad(theta_i) # New orientation
-    cost = 0 
+    cost = 0
     while t < 1:
         t = t + dt
         Xs = Xn
@@ -182,6 +182,7 @@ def action(Xi, Yi, theta_i, UL, UR):
 
     return [Xn, Yn, cost, theta_n, theta_i, UL, UR]
 
+
 def visualize_action(Xi, Yi, theta_i, UL, UR, color="blue"):
     # Xi, Yi,theta_i: Input point's coordinates
     # Xs, Ys: Start point coordinates for plot function
@@ -195,7 +196,7 @@ def visualize_action(Xi, Yi, theta_i, UL, UR, color="blue"):
     Xn = Xi
     Yn = Yi
     theta_n = np.deg2rad(theta_i) # New orientation
-    cost = 0 
+    cost = 0
     while t < 1:
         t = t + dt
         Xs = Xn
@@ -214,6 +215,7 @@ def visualize_action(Xi, Yi, theta_i, UL, UR, color="blue"):
             continue
 
         plt.plot([Xs, Xn], [Ys, Yn], color)
+
 
 def motion_model(prev_orientation, RPM_left, RPM_right, x, y):
     # TODO: determine theta angle 30? 45?
@@ -275,7 +277,7 @@ def a_star(start_node, goal_node, step_size, RPM_left, RPM_right):
         a = int(round(cur.x) / threshold)
         b = int(round(cur.y) / threshold)
         # c = orientation_dict[prev_orientation]
-        c = prev_orientation // 30
+        c = int(prev_orientation // 30)
         V[a][b][c] = 1
 
         # Initialize action set with prev_orientation, RPM_left, RPM_right, cur.x, cur.y
@@ -337,14 +339,22 @@ def a_star(start_node, goal_node, step_size, RPM_left, RPM_right):
     ori = child.prev_orientation
     UL = child.UL
     RL = child.RL
+
+    UL_list = [goal_node.UL]
+    RL_list = [goal_node.RL]
+    theta_list = [goal_node.prev_orientation]
+
     # Follow the parents from the goal node to the start node and add them to the path list.
     while parent_index != (start_node.x, start_node.y):
         n = visited[(parent_index[0], parent_index[1], ori, UL, RL)]
         path_x.append(n.x)
         path_y.append(n.y)
+        # UL_list.append(n.UL)
+        # RL_list.append(n.RL)
+        # theta_list.append(n.prev_orientation)
         parent_index = n.parent_index
         ori = n.curr_orientation
-        
+
         visualize_action(parent_index[0], parent_index[1], ori, n.UL, n.RL, color="green")
 
         UL = n.UL
@@ -356,23 +366,37 @@ def a_star(start_node, goal_node, step_size, RPM_left, RPM_right):
     x = reversed(path_x)
     y = reversed(path_y)
 
-    # for i in range(len(path_x)): # Publish robot parameters to ROS
+    UL_list.append(start_node.UL)
+    RL_list.append(start_node.RL)
+    theta_list.append(start_node.prev_orientation)
+    UL_list = reversed(UL_list)
+    RL_list = reversed(RL_list)
+    theta_list = reversed(theta_list)
 
-    #     path_x[i] += 0.5 * r * (UL + UR) * np.cos(theta_n) * dt
-    #     Yn += 0.5 * r * (UL + UR) * np.sin(theta_n) * dt
-    #     theta_n += (r / L) * (UR - UL) * dt
 
-    #     pub_dx = rospy.Publisher(velocity_msg.linear.x) 
+    # for i in range(len(UL_list)): # Publish robot parameters to ROS
+    #     UL = UL_list[i]
+    #     RL = RL_list[i]
+    #     theta = theta_list[i]
+    #     move_turtlebot(UL, RL, theta)
+
+
+    #     pub_dx = rospy.Publisher(velocity_msg.linear.x)
     #     pub_dy = rospy.Publisher(velocity_msg.linear.y)
     #     pub_dtheta = rospy.Publisher(velocity_msg.angular.z)
 
     return path_x, path_y
 
 
-def rrt():
-
-    x = random.randint(0, width)
-    y = random.randint(0, height)
+def move_turtlebot(UL, RL, theta_n):
+    r = 5
+    L = 50
+    dt = .1
+    velocity_msg.linear.x = 0.5 * r * (UL + RL) * np.cos(theta_n) * dt
+    velocity_msg.linear.y = 0.5 * r * (UL + RL) * np.sin(theta_n) * dt
+    velocity_msg.angular.z = (r / L) * (RL - UL) * dt
+    pub.publish(velocity_msg)
+    rate.sleep()
 
 
 def main():
@@ -444,71 +468,6 @@ def get_odom_data():
     return Point(*trans), rotation[2]
 
 
-def compute_distance(x1, y1, x2, y2):
-    return math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
-
-
-def go_to_goal():
-    """Task the robot to reach a goal (x,y) using a proportional controller.
-
-    The current pose of the robot is retrieved from /odom topic.
-    Publish the message to /cmd_vel topic.
-
-
-    """
-
-    # get current pose of the robot from the /odom topic
-    (position, rotation) = get_odom_data()
-    last_rotation = 0
-    # get the goal to reach from arguments passed to the command line
-    goal_x, goal_y = 0, -4
-    # compute the distance from the current position to the goal
-    distance_to_goal = compute_distance(position.x, position.y, goal_x, goal_y)
-
-    while distance_to_goal > 0.05:
-        (position, rotation) = get_odom_data()
-        x_start = position.x
-        y_start = position.y
-        rospy.loginfo("x = {0}, y = {1}".format(x_start, y_start))
-        angle_to_goal = math.atan2(goal_y - y_start, goal_x - x_start)
-
-        # the domain of arctan(x) is (-inf, inf)
-        # we would like to restrict the domain to (0, 2pi)
-        if angle_to_goal < -math.pi/4 or angle_to_goal > math.pi/4:
-            if 0 > goal_y > y_start:
-                angle_to_goal = -2 * math.pi + angle_to_goal
-            elif 0 <= goal_y < y_start:
-                angle_to_goal = 2 * math.pi + angle_to_goal
-        if last_rotation > math.pi - 0.1 and rotation <= 0:
-            rotation = 2 * math.pi + rotation
-        elif last_rotation < -math.pi + 0.1 and rotation > 0:
-            rotation = -2 * math.pi + rotation
-
-        # proportional control for rotating the robot
-        velocity_msg.angular.z = k_v_gain * angle_to_goal-rotation
-        distance_to_goal = compute_distance(position.x, position.y, goal_x, goal_y)
-        # proportional control to move the robot forward
-        # We will drive the robot at a maximum speed of 0.5
-        velocity_msg.linear.x = min(k_h_gain * distance_to_goal, 0.5)
-
-        # set the z angular velocity for positive and negative rotations
-        if velocity_msg.angular.z > 0:
-            velocity_msg.angular.z = min(velocity_msg.angular.z, 1.5)
-        else:
-            velocity_msg.angular.z = max(velocity_msg.angular.z, -1.5)
-
-        # update the new rotation for the next loop
-        last_rotation = rotation
-        pub.publish(velocity_msg)
-        rate.sleep()
-
-    # force the robot to stop by setting linear and angular velocities to 0
-    velocity_msg.linear.x = 0.0
-    velocity_msg.angular.z = 0.0
-    # publish the new message on /cmd_vel topic
-    pub.publish(velocity_msg)
-
-
 def go_straight():
     """Move the robot in a straight line until it has driven a certain distance.
 
@@ -572,11 +531,12 @@ def rotate():
     pub.publish(velocity_msg)
 
 
+
 if __name__ == '__main__':
-    # main()
+    main()
     # go_to_goal()
-    rotate()
-    go_straight()
+    # rotate()
+    # go_straight()
 
     # velocity_msg.linear.x = 0.1
     # velocity_msg.linear.y =0.1
